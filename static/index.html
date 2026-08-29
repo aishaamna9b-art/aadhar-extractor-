@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aadhaar Name and Address Extractor</title>
+    <style>
+        body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .preview-container { display: flex; gap: 20px; margin-top: 20px; }
+        .preview-box { border: 1px solid #ccc; padding: 10px; text-align: center; }
+        .preview-box img { max-width: 100%; max-height: 300px; }
+        .result-box { background: #f9f9f9; padding: 15px; border-radius: 5px; margin-top: 20px; }
+        .low-conf { color: red; font-weight: bold; }
+        #loading { display: none; margin-top: 10px; color: #0066cc; }
+    </style>
+</head>
+<body>
+
+    <h1>Aadhaar Extractor</h1>
+    <p>Upload a scan of an Aadhaar card (front and back side-by-side).</p>
+
+    <input type="file" id="fileInput" accept="image/jpeg, image/png, application/pdf">
+    <button id="uploadBtn">Extract</button>
+    <div id="errorMsg" style="color: red; margin-top: 10px;"></div>
+    <div id="loading">Processing... Please wait (OCR can take a moment).</div>
+
+    <div class="preview-container">
+        <div class="preview-box" id="origPreviewBox" style="display: none;">
+            <h3>Original Upload</h3>
+            <img id="origPreview">
+        </div>
+    </div>
+
+    <div class="preview-container" id="halvesPreviewContainer" style="display: none;">
+        <div class="preview-box">
+            <h3>Front (Cropped)</h3>
+            <img id="frontPreview">
+        </div>
+        <div class="preview-box">
+            <h3>Back (Cropped)</h3>
+            <img id="backPreview">
+        </div>
+    </div>
+
+    <div class="result-box" id="resultBox" style="display: none;">
+        <h3>Extraction Result</h3>
+        <p><strong>Name:</strong> <span id="nameResult"></span> <span id="nameConf"></span></p>
+        <p><strong>Address:</strong> <span id="addressResult"></span> <span id="addressConf"></span></p>
+        <pre id="jsonResult" style="background: #eee; padding: 10px; overflow-x: auto;"></pre>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const errorMsg = document.getElementById('errorMsg');
+        const loading = document.getElementById('loading');
+        const origPreview = document.getElementById('origPreview');
+        const origPreviewBox = document.getElementById('origPreviewBox');
+        
+        const halvesPreviewContainer = document.getElementById('halvesPreviewContainer');
+        const frontPreview = document.getElementById('frontPreview');
+        const backPreview = document.getElementById('backPreview');
+        
+        const resultBox = document.getElementById('resultBox');
+        const nameResult = document.getElementById('nameResult');
+        const nameConf = document.getElementById('nameConf');
+        const addressResult = document.getElementById('addressResult');
+        const addressConf = document.getElementById('addressConf');
+        const jsonResult = document.getElementById('jsonResult');
+
+        fileInput.addEventListener('change', () => {
+            const file = fileInput.files[0];
+            if (file) {
+                if (file.type.startsWith('image/')) {
+                    const url = URL.createObjectURL(file);
+                    origPreview.src = url;
+                    origPreviewBox.style.display = 'block';
+                } else if (file.type === 'application/pdf') {
+                    origPreviewBox.style.display = 'none';
+                }
+            }
+        });
+
+        uploadBtn.addEventListener('click', async () => {
+            errorMsg.textContent = '';
+            resultBox.style.display = 'none';
+            halvesPreviewContainer.style.display = 'none';
+            
+            const file = fileInput.files[0];
+            if (!file) {
+                errorMsg.textContent = 'Please select a file.';
+                return;
+            }
+
+            const allowedTypes = ['image/jpeg', 'image/png', 'application/pdf'];
+            if (!allowedTypes.includes(file.type)) {
+                errorMsg.textContent = 'Invalid content type. Only JPEG, PNG, and PDF are allowed.';
+                return;
+            }
+
+            const maxSize = 10 * 1024 * 1024;
+            if (file.size > maxSize) {
+                errorMsg.textContent = 'File size exceeds 10MB limit.';
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            loading.style.display = 'block';
+            uploadBtn.disabled = true;
+
+            try {
+                const response = await fetch('/extract', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    const errText = await response.text();
+                    throw new Error(`Server error: ${response.status} - ${errText}`);
+                }
+
+                const data = await response.json();
+                
+                // Display JSON
+                const displayData = { ...data };
+                delete displayData.previews; // Don't show huge base64 strings in JSON view
+                jsonResult.textContent = JSON.stringify(displayData, null, 2);
+                
+                // Set text results
+                nameResult.textContent = data.name || 'null';
+                if (data.confidence.name === 'low') {
+                    nameConf.textContent = '(Low Confidence / Not Found)';
+                    nameConf.className = 'low-conf';
+                } else {
+                    nameConf.textContent = '';
+                    nameConf.className = '';
+                }
+
+                addressResult.textContent = data.address || 'null';
+                if (data.confidence.address === 'low') {
+                    addressConf.textContent = '(Low Confidence / Not Found)';
+                    addressConf.className = 'low-conf';
+                } else {
+                    addressConf.textContent = '';
+                    addressConf.className = '';
+                }
+
+                // Show previews
+                if (data.previews) {
+                    frontPreview.src = data.previews.front;
+                    backPreview.src = data.previews.back;
+                    halvesPreviewContainer.style.display = 'flex';
+                }
+
+                resultBox.style.display = 'block';
+
+            } catch (err) {
+                errorMsg.textContent = err.message;
+            } finally {
+                loading.style.display = 'none';
+                uploadBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
